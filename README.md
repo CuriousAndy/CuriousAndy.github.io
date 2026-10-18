@@ -6,4 +6,4 @@
 - 手机：点「倾斜控制」后倾斜手机。电脑：点「手势控制」，用摄像头捏合拖动、双手缩放、张开手掌复位。
 - 内容是个人探索整理，不构成法律或移民建议。
 
-Credits: Earth texture — NASA Blue Marble (via three.js examples). Flags — [flag-icons](https://github.com/lipis/flag-icons) (MIT). 3D — [three.js](https://threejs.org/) (MIT). Hand tracking — MediaPipe Tasks Vision (Apache-2.0).
+Credits: Icons — [Twemoji](https://github.com/jdecked/twemoji) (CC-BY 4.0). Earth texture — NASA Blue Marble (via three.js examples). Flags — [flag-icons](https://github.com/lipis/flag-icons) (MIT). 3D — [three.js](https://threejs.org/) (MIT). Hand tracking — MediaPipe Tasks Vision (Apache-2.0).
