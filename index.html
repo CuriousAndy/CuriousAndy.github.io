@@ -83,6 +83,9 @@ select.btn{appearance:none}
 #voicebar{position:fixed;left:50%;transform:translateX(-50%);top:calc(env(safe-area-inset-top,0px) + 62px);font-size:13px;background:var(--panel);border:1px solid var(--accent);
   border-radius:999px;padding:6px 14px;max-width:calc(100vw - 28px);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #voicebar .dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#FF6B6B;margin-right:8px;vertical-align:1px}
+#voicebar{display:flex;align-items:center;gap:8px;white-space:nowrap}#voicebar .dot{margin-right:0;flex:none}#voicetext{min-width:0;overflow:hidden;text-overflow:ellipsis}
+#vmeter{flex:none;width:38px;height:8px;border-radius:4px;background:rgba(255,255,255,.14);overflow:hidden}#vmeter i{display:block;height:100%;width:calc(var(--lv,0)*100%);background:var(--t-v);transition:width .08s linear}
+.vsw{flex:none;font:11px var(--f-mono);color:var(--accent);background:none;border:1px solid var(--line);border-radius:999px;padding:2px 8px;cursor:pointer}
 @media (prefers-reduced-motion:no-preference){#voicebar .dot{animation:blink 1.2s infinite}}
 @keyframes blink{50%{opacity:.25}}
 #loading{position:fixed;inset:0;display:grid;place-items:center;font-family:var(--f-mono);font-size:12px;color:var(--muted);letter-spacing:.2em;pointer-events:none;transition:opacity .6s}
@@ -107,7 +110,7 @@ select.btn{appearance:none}
 <form id="ask" autocomplete="off"><input id="q" type="text" enterkeyhint="send" placeholder="直接问，比如：中国出生拿了新加坡护照，美国绿卡能快吗？" aria-label="提问"><button class="btn" type="submit">问</button></form>
 <div id="toast" hidden></div>
 <div id="cursor" hidden></div>
-<div id="voicebar" hidden><span class="dot"></span><span id="voicetext">在听…</span></div>
+<div id="voicebar" hidden><span class="dot"></span><span id="vmeter" title="麦克风音量"><i></i></span><span id="voicetext">在听…</span><button id="vengine" class="vsw" type="button">引擎</button></div>
 <div id="cambox" hidden><video id="cam" playsinline muted></video><canvas id="camviz"></canvas><div class="state" id="handState">等待手…</div></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
@@ -464,7 +467,8 @@ function showHelp(){
     ['回答由谁给', ENHANCED ? '浏览器里的中文语义模型（第一次下载约 24 MB，之后缓存），只找节点、不生成回答，问题不上传' : 'Claude 根据星图内容回答，第一次会请你授权，用的是你自己的 Claude 额度；没授权时用关键词匹配']]);
   if(ENHANCED){
     sec('手势（先点「手势控制」）', [['伸出食指指着球，停 1 秒','光圈转满即飞过去打开，等于「点击」'],['捏住拇指和食指，移动','抓住星图转动'],['双手都捏住，拉开 / 靠拢','放大 / 缩小'],['握拳停半秒','返回上一级'],['张开手掌停 1 秒','回到全景']]);
-    sec('语音（先点「语音」，说中文）', [['说什么都行','整句直接交给 AI 问答，飞到最相关的节点，比如「香港读书的年份算不算永居」「打开新加坡」'],['单独说一个控制词时才是指令','返回 / 上一级 · 全景 / 回到地球 · 放大 / 缩小 · 向左转 / 向右转 / 向上 / 向下 · 停 / 自动旋转 · 关闭 · 指令']]);
+    sec('语音（先点「语音」，说中文）', [['说什么都行','整句直接交给 AI 问答，飞到最相关的节点，比如「香港读书的年份算不算永居」「打开新加坡」'],['单独说一个控制词时才是指令','返回 / 上一级 · 全景 / 回到地球 · 放大 / 缩小 · 向左转 / 向右转 / 向上 / 向下 · 停 / 自动旋转 · 关闭 · 指令'],
+      ['绿色音量条','跟着你的声音跳 = 麦克风正常；条在跳却不出字，点语音栏右边的「⇄」换识别方式'],['两种识别方式','浏览器识别：Chrome / Edge 自带，快，但要连它们的服务器，Brave、Opera 或某些网络下会失效（收到声音 7 秒还没出字会自动切换）。本地识别：Whisper 模型在浏览器里运行，第一次下载约 80 MB，之后离线可用，声音不离开电脑，每句话说完约 1–3 秒出字']]);
     sec('倾斜（手机）', [['点「倾斜控制」后倾斜手机','星图跟着转，零点是点按钮时的角度']]);
   } else {
     sec('手势、语音、倾斜', [['点右上角「手势版 ↗」','在公开网页版里可以用摄像头手势、语音指令和手机倾斜；这个查看器不开放摄像头、麦克风和陀螺仪']]);
@@ -576,11 +580,28 @@ if (ENHANCED) {
   }
   function stop(){ running = false; MAP.hand.active = false; MAP.setHandButton(false); box.hidden = true; document.querySelector('#cursor').hidden = true; if(MAP.api) MAP.api.hover(null); if(stream) stream.getTracks().forEach(t=>t.stop()); stream = null; }
 
-  // ---------- voice commands (Web Speech API) ----------
+  // ---------- voice: two engines ----------
+  // "web" = the browser's own SpeechRecognition (Chrome streams audio to Google, Edge to Microsoft). Fast, but it goes silently dead in
+  // Chromium forks (Brave, Opera, Arc…) and on networks that can't reach that server: mic light on, nothing ever recognised.
+  // "local" = Whisper running inside this tab (transformers.js, ~80 MB once, audio never leaves the machine).
+  // A live mic meter runs in both modes; if the meter sees speech but the web engine returns no text, we switch to local automatically.
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   const vBtn = document.querySelector('#bVoice'), vBar = document.querySelector('#voicebar'), vText = document.querySelector('#voicetext');
-  if(SR){ vBtn.hidden = false; }
-  let rec = null, listening = false;
+  const vMeter = document.querySelector('#vmeter'), vEng = document.querySelector('#vengine');
+  if(navigator.mediaDevices && navigator.mediaDevices.getUserMedia) vBtn.hidden = false;
+  const brands = ((navigator.userAgentData && navigator.userAgentData.brands) || []).map(b => b.brand).join(' ');
+  const ua = navigator.userAgent, isSafari = /Safari/.test(ua) && !/Chrome|Chromium|Edg/.test(ua);
+  const official = !navigator.brave && (/Google Chrome|Microsoft Edge/.test(brands) || isSafari || (!brands && /Chrome\//.test(ua) && !/OPR|Vivaldi|YaBrowser/.test(ua)));
+  let engine = ''; try{ engine = localStorage.getItem('gc-voice-engine') || ''; }catch(_){}
+  if(engine !== 'web' && engine !== 'local') engine = SR && official ? 'web' : 'local';
+  if(!SR) engine = 'local';
+  const ENG_TXT = {web:'浏览器识别', local:'本地识别'};
+  let rec = null, listening = false, restartT = null, lastErr = '', fails = 0, netFails = 0, heardAt = 0, loudMs = 0;
+  const T2S = Object.fromEntries(('轉转 縮缩 關关 閉闭 動动 覽览 級级 後后 國国 護护 簽签 證证 區区 臺台 灣湾 門门 麼么 麽么 嗎吗 說说 這这 個个 們们 會会 從从 來来 還还 長长 學学 歐欧 亞亚 紐纽 蘭兰 與与 為为 對对 時时 間间 開开 聽听 點点 錢钱 買买 賣卖 稅税 讀读 書书 實实 現现 經经 過过 歲岁 員员 義义 務务 價价 據据 當当 應应 該该 裡里 裏里 離离 綠绿 線线 單单 雙双 費费 錄录 東东 邊边 頭头 體体 樣样 見见 覺觉 難难 發发 辦办 請请 問问 題题 導导 圖图 選选 擇择 種种 類类 專专 業业 職职 資资 產产 財财 媽妈 親亲 醫医 療疗 險险 計计 劃划 寫写 認认 識识 語语 聲声 網网 電电 腦脑 機机 場场 飛飞 島岛 韓韩 聯联 歐欧 號号 戶户 換换 樓楼 盤盘 給给 讓让 準准 遠远 近近 嗎吗').split(' ').map(p => [p[0], p[1]]));
+  const toSimp = s => s.replace(/[一-鿿]/g, c => T2S[c] || c);
+  // Whisper's well-known hallucinations on silence or noise (subtitle credits, "like and subscribe")
+  const JUNK = /字幕|订阅|訂閱|点赞|點贊|打赏|明镜|明鏡|Amara|谢谢观看|感谢观看|感謝觀看|請不吝|请不吝|下次再见|中文字幕/;
+  function cleanText(t){ t = toSimp(String(t || '').trim()); if(!t || JUNK.test(t) || !/[一-鿿A-Za-z0-9]/.test(t)) return ''; return t; }
   function act(text){
     const A = MAP.api, t = text.replace(/\s/g, '');
     // voice goes straight to AI Q&A; only a whole utterance that is exactly one short control word is a command
@@ -596,38 +617,117 @@ if (ENHANCED) {
     if(!did){ A.ask(text); did = 'AI 问答'; }
     vText.textContent = '「' + text + '」 → ' + did;
   }
-  // Chrome ends a recognition session after silence or a network hiccup; restarting the SAME object can throw silently,
-  // which left the button "on" while nothing was listening. Now: a fresh object per session, a short delay, retries, visible status.
-  let restartT = null, lastErr = '', fails = 0;
+  // ---- microphone + level meter (shared by both engines) ----
+  let micStream = null, actx = null, proc = null, srcNode = null, noise = .004, seg = null, pre = [], silentMs = 0;
+  async function openMic(){
+    micStream = await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true, noiseSuppression:true, autoGainControl:true}});
+    actx = new (window.AudioContext || window.webkitAudioContext)(); await actx.resume();
+    srcNode = actx.createMediaStreamSource(micStream); proc = actx.createScriptProcessor(2048, 1, 1);
+    const mute = actx.createGain(); mute.gain.value = 0; srcNode.connect(proc); proc.connect(mute); mute.connect(actx.destination);
+    proc.onaudioprocess = e => onAudio(e.inputBuffer.getChannelData(0), actx.sampleRate);
+  }
+  function closeMic(){
+    try{ if(proc){ proc.onaudioprocess = null; proc.disconnect(); } if(srcNode) srcNode.disconnect(); }catch(_){}
+    if(actx) actx.close().catch(() => {}); if(micStream) micStream.getTracks().forEach(t => t.stop());
+    micStream = actx = proc = srcNode = null; seg = null; pre = []; vMeter.style.setProperty('--lv', 0);
+  }
+  function onAudio(buf, rate){
+    let s = 0; for(let i = 0; i < buf.length; i++) s += buf[i]*buf[i];
+    const rms = Math.sqrt(s/buf.length), ms = buf.length/rate*1000, speech = rms > Math.max(.01, noise*3);
+    if(!speech) noise = noise*.95 + rms*.05;   // background level, tracked only while nobody is talking
+    vMeter.style.setProperty('--lv', Math.min(1, rms*14).toFixed(2));
+    if(engine === 'web'){
+      if(speech) loudMs += ms;
+      if(loudMs > 7000 && !heardAt) switchEngine('local', '浏览器自带的语音识别收到了声音，却一个字都没认出来（多半是连不上它的识别服务器）。已自动换成本地识别。');
+      return;
+    }
+    // local engine: cut the stream into utterances with a simple energy VAD (0.25 s pre-roll, ends after 0.9 s of quiet)
+    const chunk = new Float32Array(buf);
+    if(!seg){ pre.push(chunk); if(pre.length > 6) pre.shift(); if(speech){ seg = {parts:pre, ms:0, voiced:0}; pre = []; silentMs = 0; } return; }
+    seg.parts.push(chunk); seg.ms += ms; if(speech){ seg.voiced += ms; silentMs = 0; } else silentMs += ms;
+    if(silentMs > 900 || seg.ms > 15000){ const done = seg; seg = null; if(done.voiced > 300) enqueue(done.parts, rate); }
+  }
+  // ---- local engine: Whisper in the browser ----
+  let asrP = null, busy = false; const queue = [];
+  function to16k(parts, rate){
+    let n = 0; parts.forEach(p => n += p.length); const all = new Float32Array(n); let o = 0; parts.forEach(p => { all.set(p, o); o += p.length; });
+    if(rate === 16000) return all; const r = rate/16000, out = new Float32Array(Math.floor(n/r));
+    for(let i = 0; i < out.length; i++){ const a = Math.floor(i*r), b = Math.min(n, Math.floor((i+1)*r)); let t = 0; for(let j = a; j < b; j++) t += all[j]; out[i] = t/Math.max(1, b-a); }
+    return out;
+  }
+  function loadASR(){
+    if(!asrP) asrP = (async () => {
+      vText.textContent = '第一次用本地识别，要下载约 80 MB 的 Whisper 模型，之后会缓存…';
+      const T = await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.0.2');
+      T.env.allowLocalModels = false; T.env.useBrowserCache = /^https?:/.test(location.protocol);
+      const seen = {};
+      const asr = await T.pipeline('automatic-speech-recognition', 'Xenova/whisper-base', {dtype:'q8', progress_callback: p => {
+        if(p.status === 'progress' && p.total > 3e6){ seen[p.file] = p; let a = 0, b = 0; Object.values(seen).forEach(x => { a += x.loaded; b += x.total; });
+          if(listening && engine === 'local') vText.textContent = '下载本地识别模型 ' + Math.round(a/b*100) + '%…（只需一次）'; } }});
+      if(listening && engine === 'local') vText.textContent = '在听… 直接说问题（本地识别）';
+      return asr;
+    })().catch(e => { asrP = null; throw e; });
+    return asrP;
+  }
+  function enqueue(parts, rate){ if(queue.length > 2) queue.shift(); queue.push(to16k(parts, rate)); pump(); }
+  async function pump(){
+    if(busy || !queue.length) return; busy = true;
+    try{
+      const asr = await loadASR();
+      while(queue.length && listening){ const audio = queue.shift(); vText.textContent = '识别中…';
+        const out = await asr(audio, {language:'chinese', task:'transcribe'}); const t = cleanText(out && out.text);
+        if(t){ heardAt = performance.now(); act(t); } else vText.textContent = '在听… 直接说问题（本地识别）'; }
+    }catch(e){ vText.textContent = '本地识别模型没加载成功（第一次需要联网下载）'; MAP.toast('本地语音模型加载失败：' + ((e && e.message) || e), 8000); queue.length = 0; }
+    busy = false; if(queue.length && listening) pump();
+  }
+  // ---- web engine: the browser's SpeechRecognition ----
+  // Chrome ends a session after silence or a network hiccup; restarting the SAME object can throw silently,
+  // so every session gets a fresh object, a short delay, retries and visible status.
   function makeRec(){
     const r = new SR(); r.lang = 'zh-CN'; r.continuous = true; r.interimResults = true; r.maxAlternatives = 1;
-    r.onstart = () => { fails = 0; if(!lastErr || lastErr === 'no-speech') vText.textContent = '在听… 直接说问题'; };
-    r.onresult = e => { lastErr = ''; for(let i = e.resultIndex; i < e.results.length; i++){ const x = e.results[i], s = x[0].transcript.trim(); if(!s) continue; if(x.isFinal) act(s); else vText.textContent = s + '…'; } };
+    r.onstart = () => { fails = 0; if(!lastErr || lastErr === 'no-speech') vText.textContent = '在听… 直接说问题（浏览器识别）'; };
+    r.onresult = e => { lastErr = ''; netFails = 0; heardAt = performance.now();
+      for(let i = e.resultIndex; i < e.results.length; i++){ const x = e.results[i], s = x[0].transcript.trim(); if(!s) continue; if(x.isFinal) act(s); else vText.textContent = s + '…'; } };
     r.onerror = e => { lastErr = e.error;
-      if(e.error === 'not-allowed' || e.error === 'service-not-allowed'){ MAP.toast('麦克风权限被拒绝。点地址栏左侧的图标把「麦克风」改成允许，再点「语音」。本地文件（file://）每次打开都要重新允许。', 9000); stopVoice(); }
+      if(e.error === 'not-allowed' || e.error === 'service-not-allowed'){ switchEngine('local', '浏览器不让网页用它自带的语音识别，已换成本地识别。'); }
       else if(e.error === 'audio-capture'){ MAP.toast('找不到可用的麦克风，或者正被别的程序占用。', 7000); stopVoice(); }
-      else if(e.error === 'network'){ vText.textContent = '连不上语音识别服务（Chrome 的语音识别要连 Google 服务器），正在重试…'; }
+      else if(e.error === 'network'){ netFails++; if(netFails >= 2) switchEngine('local', '连不上浏览器的语音识别服务器（Chrome 要连 Google），已换成本地识别。'); else vText.textContent = '连不上浏览器的语音识别服务器，正在重试…'; }
       else if(e.error === 'no-speech'){ vText.textContent = '没听到声音，继续在听…'; }
-      else if(e.error === 'language-not-supported'){ MAP.toast('这个浏览器不支持中文语音识别，请用 Chrome 或 Edge。', 7000); stopVoice(); }
+      else if(e.error === 'language-not-supported'){ switchEngine('local', '这个浏览器的语音识别不支持中文，已换成本地识别。'); }
       else if(e.error !== 'aborted'){ vText.textContent = '语音出错（' + e.error + '），正在重试…'; } };
-    r.onend = () => { if(!listening) return; clearTimeout(restartT);
-      restartT = setTimeout(restart, lastErr === 'network' ? 2500 : 300); };
+    r.onend = () => { if(!listening || engine !== 'web') return; clearTimeout(restartT); restartT = setTimeout(restart, lastErr === 'network' ? 2500 : 300); };
     return r;
   }
+  function killRec(){ clearTimeout(restartT); if(rec){ try{ rec.onend = null; rec.onerror = null; rec.abort(); }catch(_){} } rec = null; }
   function restart(){
-    if(!listening) return;
-    if(rec){ try{ rec.onend = null; rec.abort(); }catch(_){} }
+    if(!listening || engine !== 'web') return; killRec();
     try{ rec = makeRec(); rec.start(); }
-    catch(_){ fails++; vText.textContent = '重新连接语音…'; if(fails < 8){ clearTimeout(restartT); restartT = setTimeout(restart, 1200); } else { MAP.toast('语音识别反复启动失败，请关掉「语音」再打开，或刷新页面。', 8000); stopVoice(); } }
+    catch(_){ fails++; vText.textContent = '重新连接语音…'; if(fails < 8){ restartT = setTimeout(restart, 1200); } else switchEngine('local', '浏览器语音识别反复启动失败，已换成本地识别。'); }
   }
-  function startVoice(){
-    listening = true; lastErr = ''; fails = 0; vBtn.setAttribute('aria-pressed','true'); vBar.hidden = false; vText.textContent = '正在打开麦克风…';
-    try{ rec = makeRec(); rec.start();
-      MAP.toast('语音已开启，说的话直接交给 AI 问答。单独说「返回」「全景」「放大」等是控制指令。语音由浏览器的识别服务处理。', 6500); }
-    catch(_){ MAP.toast('语音识别没能启动，请用 Chrome、Edge 或 Safari。'); stopVoice(); }
+  function syncEng(){ vEng.textContent = ENG_TXT[engine] + ' ⇄'; vEng.title = engine === 'web' ? '换成本地识别（Whisper，在浏览器里运行，不上传声音）' : '换成浏览器自带识别（更快，要连识别服务器）'; vEng.hidden = !SR && engine === 'local'; }
+  function switchEngine(to, why){
+    if(to === 'web' && !SR) return; engine = to; try{ localStorage.setItem('gc-voice-engine', to); }catch(_){}
+    killRec(); seg = null; pre = []; loudMs = 0; heardAt = 0; netFails = 0; lastErr = ''; syncEng();
+    if(why) MAP.toast(why, 8000);
+    if(!listening) return;
+    if(to === 'web'){ vText.textContent = '正在连接浏览器识别…'; restart(); }
+    else { vText.textContent = '在听… 直接说问题（本地识别）'; loadASR().catch(() => {}); }
   }
-  function stopVoice(){ listening = false; clearTimeout(restartT); vBtn.setAttribute('aria-pressed','false'); vBar.hidden = true; if(rec){ try{ rec.abort(); }catch(_){} } }
-  document.addEventListener('visibilitychange', () => { if(listening && !document.hidden){ clearTimeout(restartT); restartT = setTimeout(restart, 300); } });
+  async function startVoice(){
+    listening = true; lastErr = ''; fails = 0; netFails = 0; loudMs = 0; heardAt = 0;
+    vBtn.setAttribute('aria-pressed','true'); vBar.hidden = false; syncEng(); vText.textContent = '正在打开麦克风…';
+    try{ await openMic(); }
+    catch(err){ const n = err && err.name;
+      MAP.toast(n === 'NotAllowedError' ? '麦克风权限被拒绝。点地址栏左侧的图标把「麦克风」改成允许，再点「语音」。' : n === 'NotFoundError' ? '找不到麦克风。' : '麦克风打不开（可能正被别的程序占用）。', 9000);
+      stopVoice(); return; }
+    if(!listening) { closeMic(); return; }
+    if(engine === 'web'){ vText.textContent = '正在连接浏览器识别…'; restart(); }
+    else { vText.textContent = '在听… 直接说问题（本地识别）'; loadASR().catch(() => {}); }
+    MAP.toast('语音已开启：说的话直接交给 AI 问答，单独说「返回」「全景」「放大」等是控制指令。音量条会跟着你的声音跳；跳了却不出字，就点右边换识别方式。', 7500);
+  }
+  function stopVoice(){ listening = false; killRec(); closeMic(); queue.length = 0; vBtn.setAttribute('aria-pressed','false'); vBar.hidden = true; }
+  document.addEventListener('visibilitychange', () => { if(listening && engine === 'web' && !document.hidden){ clearTimeout(restartT); restartT = setTimeout(restart, 300); } });
+  vEng.onclick = () => switchEngine(engine === 'web' ? 'local' : 'web', engine === 'web' ? '已换成本地识别：第一次下载约 80 MB 模型，之后离线可用，声音不离开这台电脑。' : '已换成浏览器自带识别。');
   vBtn.onclick = () => listening ? stopVoice() : startVoice();
   btn.onclick = () => running ? stop() : start();
   let lastTs = -1;
