@@ -62,6 +62,7 @@ select.btn{appearance:none}
   <button class="btn" id="bAuto" aria-pressed="true">自动旋转</button>
   <button class="btn" id="bTilt" aria-pressed="false">倾斜控制</button>
   <button class="btn" id="bHand" aria-pressed="false" hidden>手势控制</button>
+  <a class="btn" id="bFull" href="https://curiousandy.github.io/" target="_blank" rel="noopener" hidden style="text-decoration:none">手势版 ↗</a>
   <button class="btn" id="bReset">全景</button>
 </div>
 <aside id="panel" hidden aria-live="polite"></aside>
@@ -261,6 +262,8 @@ bTilt.onclick = async () => {
 };
 const ds = $('#ds');
 if(DATASETS.length > 1){ ds.hidden = false; DATASETS.forEach((d,i)=>{ const o=document.createElement('option'); o.value=i; o.textContent=d.name; ds.appendChild(o); }); ds.onchange = () => build(DATASETS[+ds.value]); }
+if(!ENHANCED){ bTilt.hidden = !isTouch; $('#bFull').hidden = false; $('#bFull').textContent = isTouch ? '倾斜/手势版 ↗' : '手势版 ↗'; bTilt.hidden = true; }
+else if(!isTouch){ bTilt.hidden = true; }
 if(ENHANCED){ bHand.hidden = false; $('#hint').textContent = isTouch ? '拖动旋转 · 双指缩放 · 点球看详情 · 点「倾斜控制」后倾斜手机' : '拖动旋转 · 滚轮缩放 · 点球看详情 · 手势：捏住拖动 / 双手捏合拉开缩放 / 张开手掌复位'; }
 
 // ---------- loop ----------
