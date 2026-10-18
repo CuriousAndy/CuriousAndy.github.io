@@ -50,6 +50,19 @@ select.btn{appearance:none}
 #cambox{position:fixed;left:max(14px,env(safe-area-inset-left,0px));bottom:calc(env(safe-area-inset-bottom,0px) + 50px);width:200px;aspect-ratio:4/3;max-width:40vw;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:#000}
 #cambox video,#cambox canvas{position:absolute;inset:0;width:100%;height:100%;transform:scaleX(-1);object-fit:cover}
 #cambox .state{position:absolute;left:6px;bottom:4px;font-family:var(--f-mono);font-size:10.5px;color:var(--accent);text-shadow:0 0 4px #000}
+#panel h3{font-size:13px;color:var(--accent);margin:14px 0 4px;letter-spacing:.06em}
+#panel ul{margin:0;padding-left:1.1em;font-size:13.5px;line-height:1.7}
+#panel li{margin:.15em 0}
+#panel b{color:var(--ink);font-weight:600}
+#cursor{position:fixed;left:0;top:0;width:40px;height:40px;margin:-20px 0 0 -20px;border-radius:50%;pointer-events:none;z-index:20;
+  background:conic-gradient(var(--accent) calc(var(--p,0)*1turn), rgba(255,255,255,.12) 0);
+  -webkit-mask:radial-gradient(circle, transparent 13px, #000 14px);mask:radial-gradient(circle, transparent 13px, #000 14px);box-shadow:0 0 18px rgba(142,197,255,.6)}
+#cursor::after{content:"";position:absolute;left:50%;top:50%;width:6px;height:6px;margin:-3px;border-radius:50%;background:var(--accent)}
+#voicebar{position:fixed;left:50%;transform:translateX(-50%);top:calc(env(safe-area-inset-top,0px) + 62px);font-size:13px;background:var(--panel);border:1px solid var(--accent);
+  border-radius:999px;padding:6px 14px;max-width:calc(100vw - 28px);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#voicebar .dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#FF6B6B;margin-right:8px;vertical-align:1px}
+@media (prefers-reduced-motion:no-preference){#voicebar .dot{animation:blink 1.2s infinite}}
+@keyframes blink{50%{opacity:.25}}
 #loading{position:fixed;inset:0;display:grid;place-items:center;font-family:var(--f-mono);font-size:12px;color:var(--muted);letter-spacing:.2em;pointer-events:none;transition:opacity .6s}
 @media (max-width:640px){.lbl{font-size:11px}.lbl.cat{font-size:13px}.lbl.root{font-size:20px}#hint{font-size:11px}.brand{font-size:16px}}
 </style>
@@ -62,12 +75,16 @@ select.btn{appearance:none}
   <button class="btn" id="bAuto" aria-pressed="true">自动旋转</button>
   <button class="btn" id="bTilt" aria-pressed="false">倾斜控制</button>
   <button class="btn" id="bHand" aria-pressed="false" hidden>手势控制</button>
+  <button class="btn" id="bVoice" aria-pressed="false" hidden>语音</button>
+  <button class="btn" id="bHelp">指令</button>
   <a class="btn" id="bFull" href="https://curiousandy.github.io/" target="_blank" rel="noopener" hidden style="text-decoration:none">手势版 ↗</a>
   <button class="btn" id="bReset">全景</button>
 </div>
 <aside id="panel" hidden aria-live="polite"></aside>
 <div id="hint">拖动旋转 · 滚轮或双指缩放 · 点一个球看详情</div>
 <div id="toast" hidden></div>
+<div id="cursor" hidden></div>
+<div id="voicebar" hidden><span class="dot"></span><span id="voicetext">在听…</span></div>
 <div id="cambox" hidden><video id="cam" playsinline muted></video><canvas id="camviz"></canvas><div class="state" id="handState">等待手…</div></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
@@ -264,7 +281,7 @@ const ds = $('#ds');
 if(DATASETS.length > 1){ ds.hidden = false; DATASETS.forEach((d,i)=>{ const o=document.createElement('option'); o.value=i; o.textContent=d.name; ds.appendChild(o); }); ds.onchange = () => build(DATASETS[+ds.value]); }
 if(!ENHANCED){ bTilt.hidden = !isTouch; $('#bFull').hidden = false; $('#bFull').textContent = isTouch ? '倾斜/手势版 ↗' : '手势版 ↗'; bTilt.hidden = true; }
 else if(!isTouch){ bTilt.hidden = true; }
-if(ENHANCED){ bHand.hidden = false; $('#hint').textContent = isTouch ? '拖动旋转 · 双指缩放 · 点球看详情 · 点「倾斜控制」后倾斜手机' : '拖动旋转 · 滚轮缩放 · 点球看详情 · 手势：捏住拖动 / 双手捏合拉开缩放 / 张开手掌复位'; }
+if(ENHANCED){ bHand.hidden = false; $('#hint').textContent = isTouch ? '拖动旋转 · 双指缩放 · 点球看详情 · 点「倾斜控制」后倾斜手机' : '拖动旋转 · 滚轮缩放 · 点球看详情 · 「手势控制」「语音」开启后，点「指令」看全部用法'; }
 
 // ---------- loop ----------
 const tmp = new THREE.Vector3(), wp = new THREE.Vector3();
@@ -301,9 +318,46 @@ function frame(now){
   camera.lookAt(target); keyLight.position.copy(camera.position);
   if(!reduceMotion) earthMesh.parent.rotation.y += 0.0009*dt;
   const t = now*0.001;
-  for(const n of nodes){ if(n.level===0) continue; const pulse = n===selected ? 1.2 + Math.sin(t*3)*.06 : 1; n.mesh.scale.setScalar(n.mesh.scale.x + (pulse - n.mesh.scale.x)*.15); n.mesh.rotation.y += 0.004*dt; }
+  for(const n of nodes){ if(n.level===0) continue; const pulse = n===selected ? 1.2 + Math.sin(t*3)*.06 : n===hovered ? 1.3 : 1; n.mesh.scale.setScalar(n.mesh.scale.x + (pulse - n.mesh.scale.x)*.15); n.mesh.rotation.y += 0.004*dt; }
   renderer.render(scene, camera); updateLabels(); requestAnimationFrame(frame);
 }
+// ---------- API for gestures & voice ----------
+let hovered = null;
+function back(){ if(selected && selected.parent && selected.parent.level>0) select(selected.parent); else resetView(); }
+function pickAt(x,y){ ndc.set(x/innerWidth*2-1, -(y/innerHeight)*2+1); ray.setFromCamera(ndc, camera);
+  const hit = ray.intersectObjects(nodes.map(n=>n.mesh), false)[0]; return hit ? hit.object.userData.node : null; }
+const norm = s => String(s).toLowerCase().replace(/[\s·.,，。!！?？、:：;；"'“”「」《》()（）\-—~～]/g,'');
+const ALIAS = {'澳洲':'澳大利亚','纽西兰':'新西兰','欧盟':'欧洲','框架':'六个框架','ai的错':'AI 犯过的错','犯过的错':'AI 犯过的错','错误':'AI 犯过的错',
+  '怎么问':'怎么问 AI','漏斗':'漏斗估算','对比':'横向对比','签证游牧':'没有身份时','没有身份':'没有身份时','eb5':'EB-5','一一五':'EB-5','h1b':'H-1B 工资加权','知识库':'我是谁'};
+function findByText(text, fuzzy){
+  let q = norm(text); for(const [a,b] of Object.entries(ALIAS)){ const na = norm(a); if(q.includes(na) && !q.includes(norm(b))) q = q.split(na).join(norm(b)); }
+  const c = nodes.filter(n=>n.level>0).map(n=>({n, k:norm(n.d.label)})).filter(o=>o.k.length>=2 && q.includes(o.k)).sort((a,b)=>b.k.length-a.k.length);
+  if(c.length) return c[0].n;
+  if(!fuzzy) return null;
+  const bg = s => { const r = new Set(); for(let i=0;i<s.length-1;i++) r.add(s.slice(i,i+2)); return r; }, qb = bg(q);
+  let best = null, bs = 0;
+  for(const n of nodes){ if(!n.level) continue; const kb = bg(norm(n.d.label)); if(!kb.size) continue; let k = 0; kb.forEach(x => qb.has(x) && k++); const sc = k/kb.size; if(sc > bs){ bs = sc; best = n; } }
+  return bs >= .6 ? best : null;
+}
+function showHelp(){
+  panel.hidden = false; panel.textContent = '';
+  const close = el('button','close','×'); close.setAttribute('aria-label','关闭'); close.onclick = () => panel.hidden = true; panel.appendChild(close);
+  panel.appendChild(el('h2','','全部指令'));
+  const sec = (title, items) => { panel.appendChild(el('h3','',title)); const ul = el('ul'); items.forEach(([k,v]) => { const li = el('li'); li.appendChild(el('b','',k)); li.appendChild(document.createTextNode('：' + v)); ul.appendChild(li); }); panel.appendChild(ul); };
+  sec('鼠标 / 触屏', [['拖动','旋转'],['滚轮 / 双指','放大缩小'],['点一个球','飞过去并打开详情'],['点地球','回到全景，列出所有大类']]);
+  if(ENHANCED){
+    sec('手势（先点「手势控制」）', [['伸出食指指着球，停 1 秒','光圈转满即飞过去打开，等于「点击」'],['捏住拇指和食指，移动','抓住星图转动'],['双手都捏住，拉开 / 靠拢','放大 / 缩小'],['握拳停半秒','返回上一级'],['张开手掌停 1 秒','回到全景']]);
+    sec('语音（先点「语音」，说中文）', [['说节点名','「打开新加坡」「去 EB-5」「看 IANG」，也认「澳洲」「纽西兰」'],['返回 / 上一级','回到上一层'],['全景 / 回到地球','回到中心'],['放大 / 缩小','拉近 / 拉远'],['向左转 / 向右转 / 向上 / 向下','转动视角'],['停 / 自动旋转','暂停或开始自转'],['关闭','关掉详情面板'],['指令 / 帮助','打开这一页']]);
+    sec('倾斜（手机）', [['点「倾斜控制」后倾斜手机','星图跟着转，零点是点按钮时的角度']]);
+  } else {
+    sec('手势、语音、倾斜', [['点右上角「手势版 ↗」','在公开网页版里可以用摄像头手势、语音指令和手机倾斜；这个查看器不开放摄像头、麦克风和陀螺仪']]);
+  }
+}
+$('#bHelp').onclick = showHelp;
+window.MAP.api = { pickAt, select, back, findByText, showHelp,
+  reset: () => resetView(), close: () => { panel.hidden = true; },
+  zoom: f => { radiusGoal = clampR(radiusGoal * f); }, spin: (a,b) => { vTheta = a; vPhi = b; },
+  setAuto: b => { auto = b; syncAuto(); }, hover: n => { hovered = n; } };
 build(DATASETS[0]); requestAnimationFrame(frame);
 window.MAP.toast = toast; window.MAP.setHandButton = on => bHand.setAttribute('aria-pressed', String(on));
 })();
@@ -317,7 +371,11 @@ if (ENHANCED) {
   const d = (a,b) => Math.hypot(a.x-b.x, a.y-b.y);
   function classify(lm){ const size = d(lm[0], lm[9]) || 1e-3; const pinch = d(lm[4], lm[8]) / size < 0.42;
     const tips = [8,12,16,20].map(i => d(lm[i], lm[0]) / size); const open = !pinch && tips.every(v => v > 1.55);
-    return {pinch, open, px:(lm[4].x+lm[8].x)/2, py:(lm[4].y+lm[8].y)/2}; }
+    const point = !pinch && tips[0] > 1.5 && tips[1] < 1.3 && tips[2] < 1.25 && tips[3] < 1.25;
+    const fist = !pinch && tips.every(v => v < 1.15);
+    return {pinch, open, point, fist, px:(lm[4].x+lm[8].x)/2, py:(lm[4].y+lm[8].y)/2, ix:lm[8].x, iy:lm[8].y}; }
+  const cursor = document.querySelector('#cursor'); let cx = innerWidth/2, cy = innerHeight/2, dwellNode = null, dwellStart = 0, lockNode = null, fistSince = 0, fistLock = false;
+  const clamp01 = v => Math.max(0, Math.min(1, v));
   async function start(){
     try{
       MAP.toast('正在加载手势模型（约 8 MB，首次稍慢）…', 6000);
@@ -329,7 +387,43 @@ if (ENHANCED) {
       MAP.toast('手势已开启：捏住拇指和食指拖动=转动；双手都捏住拉开/靠拢=缩放；张开手掌停一秒=全景。', 7000); loop();
     }catch(err){ MAP.toast('手势控制没能启动：' + (err && err.name === 'NotAllowedError' ? '摄像头权限被拒绝。' : '模型或摄像头加载失败，请确认联网，并用 Chrome 或 Safari 打开。'), 6500); stop(); }
   }
-  function stop(){ running = false; MAP.hand.active = false; MAP.setHandButton(false); box.hidden = true; if(stream) stream.getTracks().forEach(t=>t.stop()); stream = null; }
+  function stop(){ running = false; MAP.hand.active = false; MAP.setHandButton(false); box.hidden = true; document.querySelector('#cursor').hidden = true; if(MAP.api) MAP.api.hover(null); if(stream) stream.getTracks().forEach(t=>t.stop()); stream = null; }
+
+  // ---------- voice commands (Web Speech API) ----------
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const vBtn = document.querySelector('#bVoice'), vBar = document.querySelector('#voicebar'), vText = document.querySelector('#voicetext');
+  if(SR){ vBtn.hidden = false; }
+  let rec = null, listening = false;
+  function act(text){
+    const A = MAP.api, t = text.replace(/\s/g, '');
+    let n = A.findByText(t, false), did = '';
+    if(n){ A.select(n); did = '打开 ' + n.d.label; }
+    else if(/指令|帮助|怎么用/.test(t)){ A.showHelp(); did = '打开指令'; }
+    else if(/全景|总览|回到地球|回到中心|全部/.test(t)){ A.reset(); did = '全景'; }
+    else if(/返回|上一级|后退|回去/.test(t)){ A.back(); did = '返回'; }
+    else if(/关闭|关掉|收起/.test(t)){ A.close(); did = '关闭面板'; }
+    else if(/放大|拉近|近一点|靠近/.test(t)){ A.zoom(.7); did = '放大'; }
+    else if(/缩小|拉远|远一点/.test(t)){ A.zoom(1.4); did = '缩小'; }
+    else if(/左/.test(t)){ A.spin(-.05, 0); did = '向左转'; }
+    else if(/右/.test(t)){ A.spin(.05, 0); did = '向右转'; }
+    else if(/上/.test(t)){ A.spin(0, -.035); did = '向上'; }
+    else if(/下/.test(t)){ A.spin(0, .035); did = '向下'; }
+    else if(/停|别转|暂停/.test(t)){ A.setAuto(false); did = '停止旋转'; }
+    else if(/自动|转起来|开始转|旋转/.test(t)){ A.setAuto(true); did = '自动旋转'; }
+    else if((n = A.findByText(t, true))){ A.select(n); did = '打开 ' + n.d.label; }
+    vText.textContent = '「' + text + '」' + (did ? ' → ' + did : ' → 没听懂，说「指令」看能说什么');
+  }
+  function startVoice(){
+    rec = new SR(); rec.lang = 'zh-CN'; rec.continuous = true; rec.interimResults = true;
+    rec.onresult = e => { for(let i = e.resultIndex; i < e.results.length; i++){ const r = e.results[i], s = r[0].transcript.trim(); if(!s) continue; if(r.isFinal) act(s); else vText.textContent = s + '…'; } };
+    rec.onerror = e => { if(e.error === 'not-allowed' || e.error === 'service-not-allowed'){ MAP.toast('麦克风权限被拒绝，语音指令无法使用。'); stopVoice(); } };
+    rec.onend = () => { if(listening){ try{ rec.start(); }catch(_){} } };
+    try{ rec.start(); listening = true; vBtn.setAttribute('aria-pressed','true'); vBar.hidden = false; vText.textContent = '在听… 试试说「打开新加坡」';
+      MAP.toast('语音已开启。说节点名或「返回」「全景」「放大」；说「指令」看全部。语音由浏览器的识别服务处理。', 6500); }
+    catch(_){ MAP.toast('语音识别没能启动，请用 Chrome、Edge 或 Safari。'); }
+  }
+  function stopVoice(){ listening = false; vBtn.setAttribute('aria-pressed','false'); vBar.hidden = true; if(rec){ try{ rec.stop(); }catch(_){} } }
+  vBtn.onclick = () => listening ? stopVoice() : startVoice();
   btn.onclick = () => running ? stop() : start();
   let lastTs = -1;
   function loop(){ if(!running) return; const now = performance.now();
@@ -337,7 +431,23 @@ if (ENHANCED) {
       const hands = (res.landmarks||[]).map(classify); MAP.hand.active = hands.length > 0; const pinched = hands.filter(h => h.pinch);
       if(pinched.length === 2){ const sep = d({x:pinched[0].px,y:pinched[0].py},{x:pinched[1].px,y:pinched[1].py}); if(prevTwo) MAP.hand.zoom *= Math.pow(prevTwo/sep, 1.6); prevTwo = sep; prev = {}; stateEl.textContent = '双手 · 缩放'; }
       else if(pinched.length === 1){ const h = pinched[0]; prevTwo = 0; if(prev.px != null){ MAP.hand.dTheta += (h.px - prev.px) * 5.2; MAP.hand.dPhi += -(h.py - prev.py) * 3.6; } prev = {px:h.px, py:h.py}; stateEl.textContent = '捏住 · 转动'; }
-      else { prev = {}; prevTwo = 0; stateEl.textContent = hands.length ? (hands.some(h=>h.open) ? '张开手掌…' : '看到手了') : '等待手…'; }
+      else { prev = {}; prevTwo = 0; stateEl.textContent = hands.length ? (hands.some(h=>h.open) ? '张开手掌…' : hands.some(h=>h.fist) ? '握拳…' : hands.some(h=>h.point) ? '指向' : '看到手了') : '等待手…'; }
+      // point with the index finger: on-screen cursor, dwell 0.9 s on a ball = select it
+      const pointer = !pinched.length && hands.find(h => h.point);
+      if(pointer){
+        cx += (clamp01(((1 - pointer.ix) - .5) * 1.7 + .5) * innerWidth - cx) * .45;
+        cy += (clamp01((pointer.iy - .5) * 1.7 + .5) * innerHeight - cy) * .45;
+        cursor.hidden = false; cursor.style.transform = `translate(${cx}px,${cy}px)`;
+        const n = MAP.api.pickAt(cx, cy); MAP.api.hover(n && n !== lockNode ? n : null);
+        if(n && n !== lockNode){
+          if(n === dwellNode){ const p = (now - dwellStart) / 900; cursor.style.setProperty('--p', Math.min(1,p).toFixed(3));
+            if(p >= 1){ MAP.api.select(n); lockNode = n; dwellNode = null; cursor.style.setProperty('--p', 0); } }
+          else { dwellNode = n; dwellStart = now; cursor.style.setProperty('--p', 0); }
+        } else { dwellNode = null; if(!n) lockNode = null; cursor.style.setProperty('--p', 0); }
+      } else { cursor.hidden = true; MAP.api.hover(null); dwellNode = null; }
+      // fist held 0.5 s = back one level
+      if(!pinched.length && hands.some(h => h.fist)){ if(!fistSince) fistSince = now; if(!fistLock && now - fistSince > 500){ MAP.api.back(); fistLock = true; stateEl.textContent = '返回'; } }
+      else { fistSince = 0; fistLock = false; }
       if(hands.length && hands.every(h => h.open)){ if(!openSince) openSince = now; if(now - openSince > 1000){ MAP.hand.reset = true; openSince = now + 99999; stateEl.textContent = '复位'; } } else openSince = 0; }
     requestAnimationFrame(loop); }
   function draw(res){ const k = devicePixelRatio||1, w = viz.width = viz.clientWidth*k, h = viz.height = viz.clientHeight*k, x = viz.getContext('2d'); x.clearRect(0,0,w,h); x.lineWidth = 2*k;
